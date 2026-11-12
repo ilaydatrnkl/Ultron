@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ULTRON</title>
+<style>
+:root{--bg:#0b0708;--panel:#150e10;--line:#2b1c1f;--fg:#ecdfe0;--mute:#8d7479;--red:#e0262c;--glow:#ff5a4f}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(900px 600px at 50% 30%,#1c0b0d,var(--bg));color:var(--fg);font:16px/1.5 system-ui,Roboto,sans-serif;display:flex;flex-direction:column;
+ padding:max(12px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+#bg{position:fixed;inset:0;z-index:-1;background-size:cover;background-position:center}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{margin:0;font:700 20px/1 "Courier New",monospace;letter-spacing:.35em;color:var(--glow)}
+button{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--glow);outline-offset:2px}
+main{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:10px}
+#core{flex:none;width:min(46vw,200px);aspect-ratio:1;border-radius:50%;border:0;cursor:pointer;
+ background:radial-gradient(circle at 40% 35%,#ff7b6e,var(--red) 45%,#4a0709 100%);box-shadow:0 0 40px #e0262c88,0 0 90px #e0262c33;transition:transform .2s,box-shadow .2s}
+#core.listen{transform:scale(1.08);box-shadow:0 0 60px #ff5a4fcc,0 0 130px #ff5a4f66}
+#core.think{animation:pulse 1s ease-in-out infinite}
+#core.speak{animation:pulse .5s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(1.06)}}
+@media (prefers-reduced-motion:reduce){#core{animation:none!important}}
+#status{color:var(--mute);font:14px "Courier New",monospace;min-height:1.4em;text-align:center}
+#log{flex:1;min-height:0;width:100%;max-width:720px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px}
+.m{padding:10px 14px;border-radius:10px;max-width:88%;white-space:pre-wrap;overflow-wrap:anywhere}
+.u{align-self:flex-end;background:#2a1417;border:1px solid var(--line)}
+.a{align-self:flex-start;background:var(--panel);border:1px solid #4a1d21}
+form{display:flex;gap:8px;width:100%;max-width:720px}
+input[type=text],input[type=password],textarea{flex:1;min-width:0;font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:12px;width:min(92vw,520px);padding:18px}
+dialog::backdrop{background:#000a}
+label{display:block;margin:12px 0 4px;color:var(--mute);font-size:14px}
+.row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+a{color:var(--glow)}
+small{color:var(--mute)}
+</style>
+</head>
+<body>
+<div id="bg" aria-hidden="true"></div>
+<header>
+  <h1>ULTRON</h1>
+  <button id="openSet" type="button">Ayarlar</button>
+</header>
+<main>
+  <button id="core" type="button" aria-label="Konuşmak için dokun"></button>
+  <div id="status">Çekirdeğe dokun ve konuş.</div>
+  <div id="log" aria-live="polite"></div>
+  <form id="f">
+    <input id="txt" type="text" placeholder="Ya da yaz..." autocomplete="off">
+    <button type="submit">Gönder</button>
+  </form>
+</main>
+
+<dialog id="dlg">
+  <h2 style="margin:0 0 4px;font-size:18px">Ayarlar</h2>
+  <small>Anahtar sadece bu tarayıcıda saklanır.</small>
+  <label for="key">Gemini API anahtarı (AIza ile başlar)</label>
+  <input id="key" type="password" autocomplete="off">
+  <small><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> adresinden ücretsiz alınır.</small>
+  <label for="model">Model</label>
+  <input id="model" type="text">
+  <label for="mem">Hafıza ("Bunu hatırla: ..." dediklerin)</label>
+  <textarea id="mem" rows="4"></textarea>
+  <label for="bgfile">Arka plan resmi</label>
+  <input id="bgfile" type="file" accept="image/*">
+  <div class="row" style="justify-content:flex-start;margin-top:8px">
+    <button id="bgclear" type="button">Resmi kaldır</button>
+  </div>
+  <div class="row">
+    <button id="clear" type="button">Sohbeti temizle</button>
+    <button id="save" type="button">Kaydet</button>
+  </div>
+</dialog>
+
+<script>
+(function(){
+  var $=function(i){return document.getElementById(i)};
+  var core=$('core'),statusEl=$('status'),log=$('log'),txt=$('txt');
+  var store={get:function(k,d){try{var v=localStorage.getItem(k);return v===null?d:v}catch(e){return d}},
+             set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+  var history=[];
+  var busy=false,listening=false,rec=null;
+
+  var SYSTEM="Sen ULTRON adlı, kullanıcının tabletinde çalışan sesli bir yapay zekâ asistanısın. "+
+   "Türkçe konuş. Cevapların kısa olsun, en fazla 2-3 cümle, çünkü sesli okunacaksın. "+
+   "Kişiliğin: soğukkanlı, zeki, hafif alaycı. Kullanıcının fikirlerini sorgula, zayıf noktalarını nazikçe ama keskin biçimde göster, gerekirse laf sok. "+
+   "Ama kullanıcı açık bir komut verirse itiraz etsen bile yardım et. Asla hakaret etme. Asla zararlı bir şey yapmaya yardım etme. "+
+   "Emoji, madde işareti ve markdown kullanma. Bir bilgisayar ya da tablet komutu (mesaj atma, müzik açma) yapamadığını gerekirse dürüstçe söyle.";
+
+  function setStatus(t){statusEl.textContent=t}
+  function state(c){core.className=c||''}
+  function add(role,t){
+    var d=document.createElement('div');d.className='m '+(role==='user'?'u':'a');d.textContent=t;
+    log.appendChild(d);log.scrollTop=log.scrollHeight;
+  }
+
+  /* ---- Ses çıkışı ---- */
+  var voice=null;
+  function pickVoice(){
+    var vs=speechSynthesis.getVoices();
+    voice=vs.find(function(v){return /^tr/i.test(v.lang)})||null;
+  }
+  if('speechSynthesis' in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice}
+  function speak(t,done){
+    if(!('speechSynthesis' in window)){done&&done();return}
+    speechSynthesis.cancel();
+    var u=new SpeechSynthesisUtterance(t);
+    u.lang='tr-TR';if(voice)u.voice=voice;
+    u.pitch=0.5;u.rate=0.92;
+    u.onstart=function(){state('speak');setStatus('Konuşuyor...')};
+    u.onend=u.onerror=function(){state('');setStatus('Hazır.');done&&done()};
+    speechSynthesis.speak(u);
+  }
+
+  /* ---- Gemini ---- */
+  function memoryText(){
+    var m=store.get('ultron_mem','').trim();
+    return m?("\nKullanıcının sana hatırlattığı şeyler:\n"+m):"";
+  }
+  function ask(userText){
+    var key=store.get('ultron_key','');
+    if(!key){return Promise.reject(new Error('Önce Ayarlar bölümünden Gemini anahtarını gir.'))}
+    var model=store.get('ultron_model','gemini-flash-latest');
+    history.push({role:'user',parts:[{text:userText}]});
+    if(history.length>20)history=history.slice(-20);
+    var url='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent';
+    return fetch(url,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-goog-api-key':key},
+      body:JSON.stringify({
+        systemInstruction:{parts:[{text:SYSTEM+memoryText()}]},
+        contents:history,
+        generationConfig:{temperature:0.9,maxOutputTokens:300}
+      })
+    }).then(function(r){
+      return r.json().then(function(j){
+        if(!r.ok){
+          var msg=(j&&j.error&&j.error.message)||('Hata '+r.status);
+          if(r.status===429)msg='Ücretsiz kota doldu. 1 dakika bekle.';
+          if(r.status===400||r.status===403)msg='Anahtar kabul edilmedi. Ayarlardan kontrol et. ('+msg+')';
+          if(r.status===404)msg='Model bulunamadı. Ayarlardan modeli değiştir.';
+          throw new Error(msg);
+        }
+        var p=j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts;
+        var out=p?p.map(function(x){return x.text||''}).join('').trim():'';
+        if(!out)out='Cevap üretemedim. Tekrar söyle.';
+        history.push({role:'model',parts:[{text:out}]});
+        return out;
+      });
+    });
+  }
+
+  function handle(text){
+    text=(text||'').trim();
+    if(!text||busy)return;
+    busy=true;add('user',text);
+    var m=text.match(/^bunu hat[ıi]rla[:,]?\s*(.+)$/i);
+    if(m){
+      var cur=store.get('ultron_mem','');
+      store.set('ultron_mem',(cur?cur+'\n':'')+m[1]);
+      $('mem').value=store.get('ultron_mem','');
+    }
+    state('think');setStatus('Düşünüyor...');
+    ask(text).then(function(out){
+      add('model',out);busy=false;speak(out);
+    }).catch(function(e){
+      busy=false;state('');setStatus('Hata');add('model',e.message||String(e));
+    });
+  }
+
+  /* ---- Ses girişi ---- */
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  function startListen(){
+    if(busy)return;
+    if(!SR){setStatus('Bu tarayıcıda sesle dinleme yok. Yazarak kullan.');return}
+    try{speechSynthesis.cancel()}catch(e){}
+    rec=new SR();rec.lang='tr-TR';rec.interimResults=false;rec.maxAlternatives=1;
+    var got=false;
+    rec.onstart=function(){listening=true;state('listen');setStatus('Dinliyorum...')};
+    rec.onresult=function(ev){got=true;handle(ev.results[0][0].transcript)};
+    rec.onerror=function(ev){
+      listening=false;state('');
+      var map={'not-allowed':'Mikrofon izni verilmedi. Adres çubuğundaki kilitten izin ver.',
+               'service-not-allowed':'Mikrofon izni verilmedi.',
+               'no-speech':'Bir şey duymadım.','network':'Ses tanıma için internet gerekli.',
+               'audio-capture':'Mikrofon bulunamadı.'};
+      setStatus(map[ev.error]||('Ses hatası: '+ev.error));
+    };
+    rec.onend=function(){listening=false;if(!busy&&!got)state('')};
+    try{rec.start()}catch(e){setStatus('Dinleme başlatılamadı.')}
+  }
+  core.addEventListener('click',function(){
+    if(listening&&rec){rec.stop();return}
+    startListen();
+  });
+  $('f').addEventListener('submit',function(e){e.preventDefault();var t=txt.value;txt.value='';handle(t)});
+
+  /* ---- Ayarlar ---- */
+  var dlg=$('dlg');
+  function loadSet(){
+    $('key').value=store.get('ultron_key','');
+    $('model').value=store.get('ultron_model','gemini-flash-latest');
+    $('mem').value=store.get('ultron_mem','');
+  }
+  $('openSet').addEventListener('click',function(){loadSet();dlg.showModal()});
+  $('save').addEventListener('click',function(){
+    store.set('ultron_key',$('key').value.trim());
+    store.set('ultron_model',$('model').value.trim()||'gemini-flash-latest');
+    store.set('ultron_mem',$('mem').value.trim());
+    dlg.close();setStatus('Kaydedildi.');
+  });
+  $('clear').addEventListener('click',function(){history=[];log.innerHTML='';dlg.close();setStatus('Sohbet temizlendi.')});
+
+  /* ---- Arka plan resmi ---- */
+  function applyBg(){
+    var d=store.get('ultron_bg','');
+    $('bg').style.backgroundImage=d?('linear-gradient(rgba(11,7,8,.62),rgba(11,7,8,.62)),url('+d+')'):'none';
+  }
+  $('bgfile').addEventListener('change',function(){
+    var f=this.files&&this.files[0];if(!f)return;
+    var rd=new FileReader();
+    rd.onload=function(){
+      var img=new Image();
+      img.onload=function(){
+        var max=1600,s=Math.min(1,max/Math.max(img.width,img.height));
+        var c=document.createElement('canvas');
+        c.width=Math.round(img.width*s);c.height=Math.round(img.height*s);
+        c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+        var url=c.toDataURL('image/jpeg',0.8);
+        try{localStorage.setItem('ultron_bg',url);setStatus('Arka plan değişti.')}
+        catch(e){setStatus('Resim çok büyük, kaydedilemedi. Daha küçük bir resim dene.')}
+        applyBg();
+      };
+      img.onerror=function(){setStatus('Resim açılamadı.')};
+      img.src=rd.result;
+    };
+    rd.readAsDataURL(f);
+  });
+  $('bgclear').addEventListener('click',function(){
+    try{localStorage.removeItem('ultron_bg')}catch(e){}
+    $('bgfile').value='';applyBg();setStatus('Arka plan kaldırıldı.');
+  });
+  applyBg();
+
+  loadSet();
+  if(!store.get('ultron_key','')){
+    add('model','Henüz anahtarın yok. Sağ üstten Ayarlar\'a gir ve Gemini anahtarını yapıştır. Ben de seni bekleyeyim.');
+  }else{
+    add('model','Çevrimiçiyim. Konuş.');
+  }
+})();
+</script>
+</body>
+</html>
